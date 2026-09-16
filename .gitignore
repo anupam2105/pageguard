@@ -1,0 +1,33 @@
+# Binaries
+/bin/
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+
+# Coverage
+*.out
+coverage.html
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
+anthropic-api-key
+slack-webhook-url
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Go
+vendor/
