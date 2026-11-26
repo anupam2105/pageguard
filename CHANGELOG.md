@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1-alpha] — 2026-11-26
+
+### Security
+- Build with Go 1.26.11, fixing standard-library CVEs reported by govulncheck (net/http, crypto/tls, crypto/x509, net/textproto; incl. GO-2026-6859).
+
 ## [0.1.0-alpha] - 2026-11-26
 
 First public release. The full loop works: alert → investigation → Slack card → human feedback.
@@ -47,5 +52,6 @@ First public release. The full loop works: alert → investigation → Slack car
 - `ToolCallsMade` now counts every tool call in the investigation, not only those in the final message
 - Investigation output wrapped in markdown code fences is now parsed correctly
 
-[Unreleased]: https://github.com/anupam2105/pageguard/compare/v0.1.0-alpha...HEAD
+[Unreleased]: https://github.com/anupam2105/pageguard/compare/v0.1.1-alpha...HEAD
+[0.1.1-alpha]: https://github.com/anupam2105/pageguard/compare/v0.1.0-alpha...v0.1.1-alpha
 [0.1.0-alpha]: https://github.com/anupam2105/pageguard/releases/tag/v0.1.0-alpha

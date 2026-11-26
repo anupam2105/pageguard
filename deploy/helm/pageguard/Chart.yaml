@@ -4,10 +4,10 @@ description: AI on-call co-pilot — investigates Alertmanager alerts and posts 
 type: application
 
 # Chart version — bumped independently from the application version.
-version: 0.1.0
+version: 0.1.1
 
 # App version — the container image tag this chart is calibrated against.
-appVersion: "v0.1.0-alpha"
+appVersion: "v0.1.1-alpha"
 
 kubeVersion: ">=1.26.0-0"
 

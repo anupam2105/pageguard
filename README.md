@@ -5,7 +5,7 @@
 
 **An AI on-call co-pilot.** Receives Prometheus alerts, investigates them with a Claude tool-use loop (metrics, logs, recent deploys), and delivers a structured hypothesis + suggested remediation to Slack.
 
-> Status: **v0.1.0-alpha**. The end-to-end flow works; the HTTP API and config may still change.
+> Status: **v0.1.1-alpha**. The end-to-end flow works; the HTTP API and config may still change.
 
 ## What it does
 
@@ -97,7 +97,7 @@ tears the stack down.
 
 ## Deploy
 
-- **Container:** `ghcr.io/anupam2105/pageguard:v0.1.0-alpha` (linux/amd64,
+- **Container:** `ghcr.io/anupam2105/pageguard:v0.1.1-alpha` (linux/amd64,
   linux/arm64; distroless, non-root). Mount a volume at `/data`.
 - **Kubernetes:** see the [Helm chart](deploy/helm/pageguard/README.md).
 

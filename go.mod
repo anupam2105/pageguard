@@ -1,6 +1,6 @@
 module github.com/anupam2105/pageguard
 
-go 1.26.6
+go 1.26.11
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.73.0
