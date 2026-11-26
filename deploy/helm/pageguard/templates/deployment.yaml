@@ -1,0 +1,163 @@
+{{- include "pageguard.assertConfig" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pageguard.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "pageguard.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  # SQLite is single-writer: exactly one pod, and the old one stops before the
+  # new one opens the database.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "pageguard.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pageguard.labels" . | nindent 8 }}
+      annotations:
+        checksum/runbooks: {{ toYaml .Values.runbooks.files | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "pageguard.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # Investigations in flight get time to finish and be recorded.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: pageguard
+          image: {{ include "pageguard.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: {{ .Values.service.portName }}
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: PAGEGUARD_HTTP_ADDR
+              value: ":8080"
+            - name: PAGEGUARD_LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            - name: PAGEGUARD_LOG_FORMAT
+              value: {{ .Values.config.logFormat | quote }}
+            - name: PAGEGUARD_ANTHROPIC_MODEL
+              value: {{ .Values.config.anthropicModel | quote }}
+            - name: PAGEGUARD_INVESTIGATION_TIMEOUT
+              value: {{ .Values.config.investigationTimeout | quote }}
+            - name: PAGEGUARD_INVESTIGATION_MAX_ITERS
+              value: {{ .Values.config.investigationMaxIters | quote }}
+            - name: PAGEGUARD_INVESTIGATION_WORKERS
+              value: {{ .Values.config.investigationWorkers | quote }}
+            - name: PAGEGUARD_ALERT_DEDUP_WINDOW
+              value: {{ .Values.config.alertDedupWindow | quote }}
+            - name: PAGEGUARD_TOOLS_MODE
+              value: {{ .Values.config.toolsMode | quote }}
+            - name: PAGEGUARD_DB_PATH
+              value: /data/pageguard.db
+            {{- with .Values.integrations.prometheusURL }}
+            - name: PAGEGUARD_PROMETHEUS_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.integrations.lokiURL }}
+            - name: PAGEGUARD_LOKI_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.integrations.lokiTenantID }}
+            - name: PAGEGUARD_LOKI_TENANT_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.integrations.shipmetricsURL }}
+            - name: PAGEGUARD_SHIPMETRICS_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if include "pageguard.runbooksConfigMap" . }}
+            - name: PAGEGUARD_RUNBOOKS_DIR
+              value: /runbooks
+            {{- end }}
+            {{- if .Values.slack.enabled }}
+            - name: PAGEGUARD_SLACK_CHANNEL
+              value: {{ .Values.slack.channel | quote }}
+            {{- include "pageguard.secretEnv" (list . "PAGEGUARD_SLACK_BOT_TOKEN" "slack-bot-token" true) | nindent 12 }}
+            {{- include "pageguard.secretEnv" (list . "PAGEGUARD_SLACK_SIGNING_SECRET" "slack-signing-secret" true) | nindent 12 }}
+            {{- end }}
+            {{- include "pageguard.secretEnv" (list . "PAGEGUARD_ANTHROPIC_API_KEY" "anthropic-api-key") | nindent 12 }}
+            {{- include "pageguard.secretEnv" (list . "PAGEGUARD_API_TOKEN" "api-token") | nindent 12 }}
+            {{- include "pageguard.secretEnv" (list . "PAGEGUARD_PROMETHEUS_BEARER_TOKEN" "prometheus-bearer-token") | nindent 12 }}
+            {{- include "pageguard.secretEnv" (list . "PAGEGUARD_LOKI_BEARER_TOKEN" "loki-bearer-token") | nindent 12 }}
+            {{- include "pageguard.secretEnv" (list . "PAGEGUARD_SHIPMETRICS_API_TOKEN" "shipmetrics-api-token") | nindent 12 }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            # SQLite may spill temp files; the root filesystem is read-only.
+            - name: tmp
+              mountPath: /tmp
+            {{- if include "pageguard.runbooksConfigMap" . }}
+            - name: runbooks
+              mountPath: /runbooks
+              readOnly: true
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: {{ .Values.service.portName }}
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: {{ .Values.service.portName }}
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-data" (include "pageguard.fullname" .)) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if include "pageguard.runbooksConfigMap" . }}
+        - name: runbooks
+          configMap:
+            name: {{ include "pageguard.runbooksConfigMap" . }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

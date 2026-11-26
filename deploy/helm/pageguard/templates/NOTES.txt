@@ -1,0 +1,46 @@
+pageguard {{ .Chart.AppVersion }} has been installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+To reach the service from your laptop:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "pageguard.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+
+  curl http://localhost:{{ .Values.service.port }}/healthz
+
+Point Alertmanager at pageguard:
+
+  receivers:
+    - name: pageguard
+      webhook_configs:
+        - url: http://{{ include "pageguard.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}/webhooks/alertmanager
+          send_resolved: false
+          http_config:
+            authorization:
+              credentials_file: /etc/alertmanager/secrets/pageguard/api-token
+{{- if not .Values.existingSecret }}
+
+WARNING: existingSecret is not set, so there is no Anthropic API key and the
+webhook will answer 503. Create a Secret with an anthropic-api-key key.
+{{- end }}
+{{- if .Values.slack.enabled }}
+
+Slack: set the app's Interactivity Request URL to
+  https://<your-ingress-host>/slack/interactions
+so the feedback buttons work.
+{{- end }}
+
+{{- if .Values.serviceMonitor.enabled }}
+
+A ServiceMonitor was created — the Prometheus Operator will start scraping
+/metrics at {{ .Values.serviceMonitor.interval }}.
+{{- else }}
+
+ServiceMonitor is disabled. If your Prometheus uses static targets, scrape
+{{ include "pageguard.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+on path /metrics.
+{{- end }}
+
+Run the chart's smoke test after install:
+
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+Docs: https://github.com/anupam2105/pageguard

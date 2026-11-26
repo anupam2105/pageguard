@@ -1,0 +1,31 @@
+apiVersion: v2
+name: pageguard
+description: AI on-call co-pilot — investigates Alertmanager alerts and posts a hypothesis to Slack
+type: application
+
+# Chart version — bumped independently from the application version.
+version: 0.1.0
+
+# App version — the container image tag this chart is calibrated against.
+appVersion: "v0.1.0-alpha"
+
+kubeVersion: ">=1.26.0-0"
+
+home: https://github.com/anupam2105/pageguard
+sources:
+  - https://github.com/anupam2105/pageguard
+
+maintainers:
+  - name: anupam2105
+    url: https://github.com/anupam2105
+
+keywords:
+  - sre
+  - oncall
+  - alertmanager
+  - llm
+  - incident-response
+  - observability
+
+annotations:
+  category: DevOps

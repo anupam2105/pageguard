@@ -1,0 +1,162 @@
+# Default values for pageguard. Override with `--values` or `--set`.
+
+image:
+  repository: ghcr.io/anupam2105/pageguard
+  tag: ""                # Defaults to Chart.appVersion when empty
+  pullPolicy: IfNotPresent
+
+# Image pull secrets for private registries. GHCR public images need none.
+imagePullSecrets: []
+
+# Override the fully-qualified resource name.
+nameOverride: ""
+fullnameOverride: ""
+
+# pageguard keeps history in an embedded SQLite file, so it runs as a single
+# replica with a Recreate strategy. This is not a configurable value.
+
+# --- Application config ---
+config:
+  # Log level: debug | info | warn | error
+  logLevel: info
+  # Log format: json | text
+  logFormat: json
+  anthropicModel: claude-sonnet-5
+  investigationTimeout: 60s
+  investigationMaxIters: 8
+  investigationWorkers: 2
+  alertDedupWindow: 30m
+  # live: query the endpoints below. mock: canned demo data (never in prod).
+  toolsMode: live
+
+# --- Tool endpoints (each optional; unset tools tell the model they're unavailable) ---
+integrations:
+  prometheusURL: ""        # e.g. http://prometheus-operated.monitoring:9090
+  lokiURL: ""              # e.g. http://loki-gateway.monitoring
+  lokiTenantID: ""
+  shipmetricsURL: ""       # e.g. http://shipmetrics.platform:8080
+
+# --- Secrets ---
+# Reference ONE existing Secret holding any of these keys (all optional
+# except anthropic-api-key, without which the webhook answers 503):
+#   anthropic-api-key, api-token, slack-bot-token, slack-signing-secret,
+#   prometheus-bearer-token, loki-bearer-token, shipmetrics-api-token
+# Create it with e.g.:
+#   kubectl create secret generic pageguard --from-literal=anthropic-api-key=sk-ant-...
+existingSecret: ""
+
+# --- Slack (bot-token mode; token + signing secret come from existingSecret) ---
+slack:
+  enabled: false
+  channel: ""              # channel ID or #name the bot has been invited to
+
+# --- Runbooks ---
+# Markdown files keyed by alert name (HighErrorRate.md, high-error-rate.md...).
+# Inline them here, or mount your own ConfigMap via runbooks.existingConfigMap.
+runbooks:
+  existingConfigMap: ""
+  files: {}
+  #  HighErrorRate.md: |
+  #    # HighErrorRate
+  #    1. Check recent deploys...
+
+# --- Persistence (SQLite investigation history + feedback) ---
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+  accessModes: [ReadWriteOnce]
+  existingClaim: ""
+
+# --- Kubernetes resource shape ---
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# --- Service ---
+service:
+  type: ClusterIP
+  port: 8080
+  # Name of the port exposed on the service — referenced by ServiceMonitor.
+  portName: http
+
+# --- Health probes ---
+probes:
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 3
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 3
+
+# --- Pod security context (matches Dockerfile: nonroot uid 65532) ---
+podSecurityContext:
+  fsGroup: 65532
+  runAsNonRoot: true
+
+# --- Container security context (defence in depth) ---
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+# --- Service account ---
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# --- Ingress (disabled by default; users bring their own) ---
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    # Expose only what Slack must reach (/slack/interactions); keep the
+    # webhook and API cluster-internal where possible.
+    - host: pageguard.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# --- Prometheus Operator ServiceMonitor ---
+# Only usable when the target cluster has the Prometheus Operator CRDs
+# (Prometheus stack, kube-prometheus, etc.) installed.
+serviceMonitor:
+  enabled: false
+  namespace: ""
+  interval: 15s
+  scrapeTimeout: 10s
+  honorLabels: false
+  labels: {}
+
+# --- Scheduling ---
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+# --- Extra labels/annotations for all resources ---
+commonLabels: {}
+commonAnnotations: {}
+
+# --- Extra environment variables (raw list, appended after config-derived ones) ---
+extraEnv: []

@@ -71,8 +71,21 @@ jobs:
           curl -sf http://localhost:8080/healthz | grep -q '"status":"ok"'
           curl -sf http://localhost:8080/readyz | grep -q '"status":"ready"'
           curl -sf http://localhost:8080/metrics | grep -q "pageguard_http_requests_total"
+          # No API key configured: the webhook must refuse rather than drop alerts.
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/webhooks/alertmanager -d '{}')" = 503
           kill "$PID"
           wait "$PID" 2>/dev/null || true
+
+  helm:
+    name: Helm lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: azure/setup-helm@v4
+      - name: Lint chart
+        run: |
+          helm lint deploy/helm/pageguard
+          helm lint deploy/helm/pageguard --set existingSecret=pg --set slack.enabled=true --set slack.channel=C1
 
   vuln:
     name: Vulnerability scan
