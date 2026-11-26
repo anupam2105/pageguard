@@ -1,0 +1,100 @@
+# End-to-end pageguard demo:
+#   checkout (fake service) → Prometheus → Alertmanager → pageguard → Claude
+#   pageguard's tools query Prometheus, Loki and shipmetrics live.
+#
+#   cp .env.example .env   # add PAGEGUARD_ANTHROPIC_API_KEY (Slack optional)
+#   just demo
+#
+# ~90s after start, checkout "deploys" v2.14.3 with a nil-pointer bug; the
+# HighErrorRate alert fires a minute later and pageguard investigates.
+# Requires a sibling checkout of shipmetrics (SHIPMETRICS_SRC) for its
+# /api/v1/deployments read API.
+
+services:
+  pageguard:
+    build: .
+    environment:
+      PAGEGUARD_LOG_FORMAT: text
+      PAGEGUARD_ANTHROPIC_API_KEY: ${PAGEGUARD_ANTHROPIC_API_KEY:-}
+      PAGEGUARD_ANTHROPIC_MODEL: ${PAGEGUARD_ANTHROPIC_MODEL:-claude-sonnet-5}
+      PAGEGUARD_API_TOKEN: demo-token
+      PAGEGUARD_TOOLS_MODE: live
+      PAGEGUARD_PROMETHEUS_URL: http://prometheus:9090
+      PAGEGUARD_LOKI_URL: http://loki:3100
+      PAGEGUARD_SHIPMETRICS_URL: http://shipmetrics:8080
+      PAGEGUARD_SHIPMETRICS_API_TOKEN: demo-shipmetrics-token
+      PAGEGUARD_RUNBOOKS_DIR: /runbooks
+      PAGEGUARD_SLACK_BOT_TOKEN: ${PAGEGUARD_SLACK_BOT_TOKEN:-}
+      PAGEGUARD_SLACK_CHANNEL: ${PAGEGUARD_SLACK_CHANNEL:-}
+      PAGEGUARD_SLACK_SIGNING_SECRET: ${PAGEGUARD_SLACK_SIGNING_SECRET:-}
+    volumes:
+      - ./deploy/runbooks:/runbooks:ro
+      - pageguard_data:/data
+    ports:
+      - "${PAGEGUARD_HOST_PORT:-8080}:8080"
+
+  checkout:
+    build:
+      context: .
+      dockerfile: deploy/demo/checkout/Dockerfile
+    environment:
+      LOKI_URL: http://loki:3100
+      SHIPMETRICS_URL: http://shipmetrics:8080
+      DEMO_BREAK_AFTER: ${DEMO_BREAK_AFTER:-90s}
+    ports:
+      - "${CHECKOUT_HOST_PORT:-8082}:8080"
+    depends_on:
+      shipmetrics:
+        condition: service_started
+      loki:
+        condition: service_started
+
+  shipmetrics:
+    build: ${SHIPMETRICS_SRC:-../shipmetrics}
+    environment:
+      SHIPMETRICS_DATABASE_URL: postgres://shipmetrics:shipmetrics@postgres:5432/shipmetrics?sslmode=disable
+      SHIPMETRICS_LOG_FORMAT: text
+      SHIPMETRICS_API_TOKEN: demo-shipmetrics-token
+    ports:
+      - "${SHIPMETRICS_HOST_PORT:-8081}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: shipmetrics
+      POSTGRES_PASSWORD: shipmetrics
+      POSTGRES_DB: shipmetrics
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shipmetrics -d shipmetrics"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./deploy/demo/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/demo/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.0
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    volumes:
+      - ./deploy/demo/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "${ALERTMANAGER_HOST_PORT:-9093}:9093"
+
+  loki:
+    image: grafana/loki:3.3.2
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "${LOKI_HOST_PORT:-3100}:3100"
+
+volumes:
+  pageguard_data:

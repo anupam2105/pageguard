@@ -16,3 +16,8 @@ docs
 deploy
 coverage.out
 *.test
+!deploy/demo/checkout
+.env
+*.db
+*.db-shm
+*.db-wal

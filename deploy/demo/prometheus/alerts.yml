@@ -1,0 +1,15 @@
+groups:
+  - name: checkout
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum by (service, environment) (rate(http_requests_total{code=~"5.."}[1m]))
+            /
+          sum by (service, environment) (rate(http_requests_total[1m]))
+            > 0.05
+        for: 1m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.service }} 5xx ratio is {{ $value | humanizePercentage }}"
+          description: "More than 5% of requests to {{ $labels.service }} in {{ $labels.environment }} are failing."

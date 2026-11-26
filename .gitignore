@@ -31,3 +31,8 @@ slack-webhook-url
 
 # Go
 vendor/
+
+# Local SQLite history
+*.db
+*.db-shm
+*.db-wal
