@@ -113,3 +113,41 @@ func TestLoadHonoursEnvOverrides(t *testing.T) {
 		t.Errorf("InvestigationMaxIters = %d, want 12", cfg.InvestigationMaxIters)
 	}
 }
+
+func TestLoadM3Defaults(t *testing.T) {
+	for _, k := range []string{"PAGEGUARD_TOOLS_MODE", "PAGEGUARD_DB_PATH", "PAGEGUARD_SLACK_BOT_TOKEN",
+		"PAGEGUARD_INVESTIGATION_WORKERS", "PAGEGUARD_ALERT_DEDUP_WINDOW"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ToolsMode != "live" || cfg.DBPath != "pageguard.db" || cfg.InvestigationWorkers != 2 || cfg.AlertDedupWindow != 30*time.Minute {
+		t.Errorf("defaults = mode %q db %q workers %d dedup %v", cfg.ToolsMode, cfg.DBPath, cfg.InvestigationWorkers, cfg.AlertDedupWindow)
+	}
+}
+
+func TestLoadRejectsInvalidToolsMode(t *testing.T) {
+	t.Setenv("PAGEGUARD_TOOLS_MODE", "fake")
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "TOOLS_MODE") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadSlackRequiresChannelAndSigningSecret(t *testing.T) {
+	t.Setenv("PAGEGUARD_SLACK_BOT_TOKEN", "xoxb-test")
+	t.Setenv("PAGEGUARD_SLACK_CHANNEL", "")
+	t.Setenv("PAGEGUARD_SLACK_SIGNING_SECRET", "")
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "SLACK_CHANNEL") {
+		t.Fatalf("missing channel: err = %v", err)
+	}
+	t.Setenv("PAGEGUARD_SLACK_CHANNEL", "#oncall")
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "SIGNING_SECRET") {
+		t.Fatalf("missing secret: err = %v", err)
+	}
+	t.Setenv("PAGEGUARD_SLACK_SIGNING_SECRET", "abc")
+	if _, err := config.Load(); err != nil {
+		t.Fatalf("complete slack config: %v", err)
+	}
+}
