@@ -31,6 +31,7 @@ demo:
     @echo "pageguard:    http://localhost:8080/api/v1/investigations  (Authorization: Bearer demo-token)"
     @echo "prometheus:   http://localhost:9090/alerts"
     @echo "alertmanager: http://localhost:9093"
+    @echo "grafana:      http://localhost:3000  (pageguard dashboard; admin/admin)"
     @echo "The bad deploy lands ~90s after start; the alert fires ~1m later."
 
 demo-logs:
