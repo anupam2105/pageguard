@@ -8,9 +8,12 @@ import (
 )
 
 // Alert is the canonical representation of a firing Prometheus alert. The
-// Alertmanager webhook receiver (M3) will populate this from the payload;
-// the Investigator only ever reads it, so the shape stays consumer-first.
+// Alertmanager webhook receiver populates this from the payload; the
+// Investigator only ever reads it, so the shape stays consumer-first.
 type Alert struct {
+	// Fingerprint is Alertmanager's stable identity for the label set. Used
+	// to avoid re-investigating the same alert on every repeat notification.
+	Fingerprint string
 	Name        string
 	Severity    string // e.g. "page", "ticket", "info"
 	Service     string
