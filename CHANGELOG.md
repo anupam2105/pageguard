@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Grafana dashboard (`deploy/grafana/dashboards/pageguard.json`) for alerts, investigation outcomes and latency, confidence, feedback and Slack delivery. The demo now runs Grafana on port 3000 with the dashboard as its home page.
+
+### Fixed
+- Demo `checkout` image builds again (its Go base image was not bumped to 1.26.11).
+
 ## [0.1.1-alpha] — 2026-11-26
 
 ### Security

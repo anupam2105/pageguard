@@ -79,9 +79,15 @@ to this repo at `../shipmetrics`.
 
 ```bash
 cp .env.example .env        # set PAGEGUARD_ANTHROPIC_API_KEY (Slack optional)
-just demo                   # pageguard, checkout demo, Prometheus, Alertmanager, Loki, shipmetrics
+just demo                   # pageguard, checkout demo, Prometheus, Alertmanager, Loki, shipmetrics, Grafana
 just demo-logs
 ```
+
+Open Grafana at <http://localhost:3000> (anonymous view; `admin`/`admin` to
+edit). The **pageguard — AI on-call co-pilot** dashboard is the home page. It
+shows alerts received, investigation outcomes and latency, confidence, human
+feedback, the checkout-api error ratio that triggers the alert, and checkout-api's logs
+from Loki.
 
 About 90 seconds after start, the fake `checkout-api` "deploys" v2.14.3,
 which has a nil-pointer bug. `HighErrorRate` fires a minute later, and the
@@ -176,6 +182,12 @@ unavailable. pageguard never substitutes fake data in a real investigation.
 | `pageguard_investigation_confidence_total{confidence}` | Confidence the model reported |
 | `pageguard_feedback_total{verdict,source}` | Human verdicts. The ratio of up to down votes measures hypothesis accuracy |
 | `pageguard_queue_depth`, `pageguard_slack_posts_total{result}` | Backlog size and Slack delivery |
+
+A Grafana dashboard for these metrics is in
+[`deploy/grafana/dashboards/pageguard.json`](deploy/grafana/dashboards/pageguard.json).
+The demo provisions it automatically. To use it elsewhere, import the JSON into
+Grafana and point it at a Prometheus datasource with uid `prometheus` (and, for
+the demo log panel, a Loki datasource with uid `loki`).
 
 ## How it's built
 
