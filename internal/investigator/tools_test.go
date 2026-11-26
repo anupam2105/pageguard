@@ -2,150 +2,154 @@ package investigator
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
-// The tool functions are package-private so tests live in the same package
-// (no _test suffix). This lets us call them directly and assert on the
-// canned bodies without going through the LLM.
+// Package-internal tests: they exercise the mock backend, tool registration
+// and input clamping directly, without going through the LLM.
 
 func TestMockPromQLBranchesOnQueryContent(t *testing.T) {
 	t.Parallel()
-
-	cases := []struct {
-		name   string
-		query  string
-		expect string
-	}{
+	cases := []struct{ name, query, expect string }{
 		{"error metric", "rate(http_errors_total[5m])", "step change"},
 		{"latency metric", "histogram_quantile(0.95, http_request_duration_seconds)", "elevated"},
 		{"generic metric", `up{job="foo"}`, "no anomaly"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			out, err := mockPromQL(context.Background(), PromQLInput{Query: tc.query})
+			out, err := MockBackend{}.PromQL(context.Background(), tc.query, time.Hour)
 			if err != nil {
-				t.Fatalf("mockPromQL: %v", err)
+				t.Fatalf("PromQL: %v", err)
 			}
-			if out.OfText == nil {
-				t.Fatal("expected text result, got nil OfText")
-			}
-			if !strings.Contains(out.OfText.Text, tc.expect) {
-				t.Errorf("body missing %q:\n%s", tc.expect, out.OfText.Text)
+			if !strings.Contains(out, tc.expect) {
+				t.Errorf("body missing %q:\n%s", tc.expect, out)
 			}
 		})
-	}
-}
-
-func TestMockPromQLDefaultsRangeHours(t *testing.T) {
-	t.Parallel()
-	out, err := mockPromQL(context.Background(), PromQLInput{Query: "up"})
-	if err != nil {
-		t.Fatalf("mockPromQL: %v", err)
-	}
-	if !strings.Contains(out.OfText.Text, "last 1h") {
-		t.Errorf("expected default range of 1h, got:\n%s", out.OfText.Text)
 	}
 }
 
 func TestMockLokiBranchesOnQueryContent(t *testing.T) {
 	t.Parallel()
-
-	cases := []struct {
-		name   string
-		query  string
-		expect string
-	}{
+	cases := []struct{ name, query, expect string }{
 		{"error logs", `{service="checkout"} |= "ERROR"`, "nil pointer dereference"},
 		{"warn logs", `{service="checkout"} |= "WARN"`, "12 matches"},
 		{"quiet stream", `{service="checkout"} |= "INFO"`, "0 matches"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			out, err := mockLoki(context.Background(), LokiInput{Query: tc.query})
+			out, err := MockBackend{}.Loki(context.Background(), tc.query, time.Hour)
 			if err != nil {
-				t.Fatalf("mockLoki: %v", err)
+				t.Fatalf("Loki: %v", err)
 			}
-			if !strings.Contains(out.OfText.Text, tc.expect) {
-				t.Errorf("body missing %q:\n%s", tc.expect, out.OfText.Text)
+			if !strings.Contains(out, tc.expect) {
+				t.Errorf("body missing %q:\n%s", tc.expect, out)
 			}
 		})
-	}
-}
-
-func TestMockRecentDeploysIncludesServiceAndEnv(t *testing.T) {
-	t.Parallel()
-	out, err := mockRecentDeploys(context.Background(), RecentDeploysInput{
-		Service: "checkout-api", Environment: "prod",
-	})
-	if err != nil {
-		t.Fatalf("mockRecentDeploys: %v", err)
-	}
-	for _, want := range []string{"checkout-api", "prod", "v2.14.3", "@alice"} {
-		if !strings.Contains(out.OfText.Text, want) {
-			t.Errorf("body missing %q:\n%s", want, out.OfText.Text)
-		}
 	}
 }
 
 func TestMockRunbookBranchesOnAlertName(t *testing.T) {
 	t.Parallel()
-
-	cases := []struct {
-		alert  string
-		expect string
-	}{
+	cases := []struct{ alert, expect string }{
 		{"HighErrorRate", "Rollback command"},
 		{"HighLatency", "downstream dependency"},
 		{"WeirdAlert", "No specific runbook found"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.alert, func(t *testing.T) {
 			t.Parallel()
-			out, err := mockRunbook(context.Background(), RunbookInput{AlertName: tc.alert})
+			out, err := MockBackend{}.Runbook(context.Background(), tc.alert)
 			if err != nil {
-				t.Fatalf("mockRunbook: %v", err)
+				t.Fatalf("Runbook: %v", err)
 			}
-			if !strings.Contains(out.OfText.Text, tc.expect) {
-				t.Errorf("body missing %q:\n%s", tc.expect, out.OfText.Text)
+			if !strings.Contains(out, tc.expect) {
+				t.Errorf("body missing %q:\n%s", tc.expect, out)
 			}
 		})
 	}
 }
 
-func TestDefaultToolsRegistersExactlyFour(t *testing.T) {
+func TestClampHours(t *testing.T) {
 	t.Parallel()
-	tools, err := defaultTools()
-	if err != nil {
-		t.Fatalf("defaultTools: %v", err)
+	cases := []struct {
+		in   int
+		want time.Duration
+	}{
+		{0, time.Hour}, {-3, time.Hour}, {5, 5 * time.Hour}, {24, 24 * time.Hour}, {9999, 24 * time.Hour},
 	}
-	if len(tools) != 4 {
-		t.Fatalf("len(tools) = %d, want 4", len(tools))
+	for _, tc := range cases {
+		if got := clampHours(tc.in, defaultRangeHours, maxRangeHours); got != tc.want {
+			t.Errorf("clampHours(%d) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+// recordingBackend captures the arguments each tool passed through.
+type recordingBackend struct {
+	MockBackend
+	within time.Duration
+}
+
+func (r *recordingBackend) RecentDeploys(ctx context.Context, s, e string, within time.Duration) (string, error) {
+	r.within = within
+	return r.MockBackend.RecentDeploys(ctx, s, e, within)
+}
+
+func TestBuildToolsRegistersFourAndCountsCalls(t *testing.T) {
+	t.Parallel()
+	backend := &recordingBackend{}
+	var calls atomic.Int64
+	tools, err := buildTools(backend, &calls)
+	if err != nil {
+		t.Fatalf("buildTools: %v", err)
 	}
 
-	want := map[string]bool{
-		"get_recent_deploys": false,
-		"promql_query":       false,
-		"loki_query":         false,
-		"read_runbook":       false,
-	}
+	want := map[string]bool{"get_recent_deploys": false, "promql_query": false, "loki_query": false, "read_runbook": false}
 	for _, tool := range tools {
-		name := tool.Name()
-		if _, ok := want[name]; !ok {
-			t.Errorf("unexpected tool name %q", name)
-			continue
+		if _, ok := want[tool.Name()]; !ok {
+			t.Errorf("unexpected tool %q", tool.Name())
 		}
-		want[name] = true
+		want[tool.Name()] = true
 	}
 	for name, seen := range want {
 		if !seen {
 			t.Errorf("tool %q not registered", name)
+		}
+	}
+
+	input, _ := json.Marshal(RecentDeploysInput{Service: "checkout-api", Environment: "prod", WithinHours: 500})
+	out, err := tools[0].Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(out) != 1 || out[0].OfText == nil || !strings.Contains(out[0].OfText.Text, "v2.14.3") {
+		t.Errorf("unexpected tool output: %+v", out)
+	}
+	if backend.within != maxWithinHours*time.Hour {
+		t.Errorf("within not clamped: %v", backend.within)
+	}
+	if calls.Load() != 1 {
+		t.Errorf("calls = %d, want 1", calls.Load())
+	}
+}
+
+func TestExtractJSONObject(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		`{"a":1}`:                         `{"a":1}`,
+		"```json\n{\"a\":1}\n```":         `{"a":1}`,
+		"Here is the result:\n{\"a\":{}}": `{"a":{}}`,
+		"no json here":                    "no json here",
+	}
+	for in, want := range cases {
+		if got := extractJSONObject(in); got != want {
+			t.Errorf("extractJSONObject(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

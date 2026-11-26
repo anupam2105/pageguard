@@ -36,7 +36,7 @@ func sampleAlert() *domain.Alert {
 
 func TestNewFillsDefaults(t *testing.T) {
 	t.Parallel()
-	inv, err := investigator.New(investigator.Config{}, discardLogger())
+	inv, err := investigator.New(&investigator.Config{}, discardLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestInvestigateFailsWithoutAPIKey(t *testing.T) {
 	// Cannot use t.Parallel here — t.Setenv forbids it (Go 1.25+).
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
-	inv, err := investigator.New(investigator.Config{}, discardLogger())
+	inv, err := investigator.New(&investigator.Config{}, discardLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestInvestigateRejectsInvalidAlert(t *testing.T) {
 	// Fake key — never leaves the test; suppresses the no-key branch so we
 	// exercise the alert-validation path directly.
 	const fakeKey = "sk-ant-validation-only" //nolint:gosec // G101 false positive
-	inv, err := investigator.New(investigator.Config{APIKey: fakeKey}, discardLogger())
+	inv, err := investigator.New(&investigator.Config{APIKey: fakeKey}, discardLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestInvestigateEndToEnd(t *testing.T) {
 	}
 
 	logger := discardLogger()
-	inv, err := investigator.New(investigator.Config{
+	inv, err := investigator.New(&investigator.Config{
 		APIKey:  key,
 		Model:   "claude-sonnet-5",
 		Timeout: 90 * time.Second,

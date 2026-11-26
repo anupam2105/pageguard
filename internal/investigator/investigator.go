@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -17,13 +18,17 @@ import (
 // Config controls the investigator's runtime shape. All fields have safe
 // zero-value defaults except APIKey — no key means Investigate() returns
 // an error at call time rather than at construction, so the process can
-// still boot without one (M0 semantics).
+// still boot without one.
 type Config struct {
 	APIKey        string
 	Model         string        // e.g. "claude-sonnet-5"
 	MaxIterations int           // ceiling on tool-use loop iterations
 	MaxTokens     int           // per-response cap; SDK requires it
 	Timeout       time.Duration // budget for one full investigation
+	// Backend supplies the data behind the tools. Nil means MockBackend.
+	Backend Backend
+	// BaseURL overrides the Anthropic API endpoint (proxies, tests).
+	BaseURL string
 }
 
 // DefaultConfig returns production-shaped defaults. Callers overlay their
@@ -42,15 +47,15 @@ func DefaultConfig() Config {
 // handles its own concurrency and retries.
 type Investigator struct {
 	client *anthropic.Client
-	tools  []anthropic.BetaTool
 	cfg    Config
 	logger *slog.Logger
 }
 
 // New constructs an Investigator. Returns an error only if tool registration
-// fails (an internal bug — the mocks all compile). Missing APIKey is not a
-// construction error; Investigate() surfaces it if actually invoked.
-func New(cfg Config, logger *slog.Logger) (*Investigator, error) {
+// fails (an internal bug). Missing APIKey is not a construction error;
+// Investigate() surfaces it if actually invoked.
+func New(in *Config, logger *slog.Logger) (*Investigator, error) {
+	cfg := *in // copy so defaults don't mutate the caller's struct
 	defaults := DefaultConfig()
 	if cfg.Model == "" {
 		cfg.Model = defaults.Model
@@ -65,27 +70,30 @@ func New(cfg Config, logger *slog.Logger) (*Investigator, error) {
 		cfg.Timeout = defaults.Timeout
 	}
 
-	tools, err := defaultTools()
-	if err != nil {
+	if cfg.Backend == nil {
+		cfg.Backend = MockBackend{}
+	}
+
+	// Tools are rebuilt per investigation (to count calls per session), so
+	// register once here purely to fail fast on schema errors.
+	if _, err := buildTools(cfg.Backend, new(atomic.Int64)); err != nil {
 		return nil, fmt.Errorf("register tools: %w", err)
 	}
 
 	// The SDK builds its own auth from ANTHROPIC_API_KEY when no option is
-	// provided; passing an explicit key overrides that. We wrap the client
-	// construction so pageguard can supply the key from its own config
-	// rather than requiring an env var.
-	var client *anthropic.Client
+	// provided; passing an explicit key overrides that so pageguard can
+	// supply the key from its own config rather than requiring an env var.
+	var opts []option.RequestOption
 	if cfg.APIKey != "" {
-		c := anthropic.NewClient(option.WithAPIKey(cfg.APIKey))
-		client = &c
-	} else {
-		c := anthropic.NewClient()
-		client = &c
+		opts = append(opts, option.WithAPIKey(cfg.APIKey))
 	}
+	if cfg.BaseURL != "" {
+		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
+	}
+	c := anthropic.NewClient(opts...)
 
 	return &Investigator{
-		client: client,
-		tools:  tools,
+		client: &c,
 		cfg:    cfg,
 		logger: logger,
 	}, nil
@@ -111,8 +119,14 @@ func (i *Investigator) Investigate(ctx context.Context, alert *domain.Alert) (*d
 
 	startedAt := time.Now()
 
+	var calls atomic.Int64
+	tools, err := buildTools(i.cfg.Backend, &calls)
+	if err != nil {
+		return nil, fmt.Errorf("register tools: %w", err)
+	}
+
 	runner := i.client.Beta.Messages.NewToolRunner(
-		i.tools,
+		tools,
 		anthropic.BetaToolRunnerParams{
 			BetaMessageNewParams: anthropic.BetaMessageNewParams{
 				Model:     i.cfg.Model,
@@ -148,7 +162,7 @@ func (i *Investigator) Investigate(ctx context.Context, alert *domain.Alert) (*d
 		return nil, err
 	}
 
-	inv, err := domain.ParseInvestigation([]byte(body))
+	inv, err := domain.ParseInvestigation([]byte(extractJSONObject(body)))
 	if err != nil {
 		i.logger.Warn("investigation parse failed",
 			"alert", alert.Name,
@@ -163,7 +177,7 @@ func (i *Investigator) Investigate(ctx context.Context, alert *domain.Alert) (*d
 	inv.StartedAt = startedAt
 	inv.FinishedAt = finishedAt
 	inv.Duration = finishedAt.Sub(startedAt)
-	inv.ToolCallsMade = countToolCalls(final)
+	inv.ToolCallsMade = int(calls.Load())
 
 	return inv, nil
 }
@@ -189,18 +203,16 @@ func extractFinalText(msg *anthropic.BetaMessage) (string, error) {
 	return body, nil
 }
 
-// countToolCalls counts tool_use blocks across the final assistant message.
-// Note: this only counts calls in the terminal turn, not the whole session —
-// full history is available inside the runner if a caller wants a total, but
-// the terminal-turn count is the interesting signal for cost accounting.
-func countToolCalls(msg *anthropic.BetaMessage) int {
-	n := 0
-	for idx := range msg.Content {
-		if _, ok := msg.Content[idx].AsAny().(anthropic.BetaToolUseBlock); ok {
-			n++
-		}
+// extractJSONObject tolerates the two ways models most often wrap the
+// requested JSON — markdown fences and a leading sentence — by slicing from
+// the first '{' to the last '}'. Anything still malformed fails parsing.
+func extractJSONObject(body string) string {
+	start := strings.Index(body, "{")
+	end := strings.LastIndex(body, "}")
+	if start < 0 || end < start {
+		return body
 	}
-	return n
+	return body[start : end+1]
 }
 
 // stopDetailsSummary formats StopDetails for logs.
